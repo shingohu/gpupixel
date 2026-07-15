@@ -19,6 +19,7 @@ jobs:
   build-linux:
     name: Build (Linux) - PoC
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     env:
       BUILD_DIR: build
       ARTIFACT_DIR: build_logs
@@ -32,13 +33,44 @@ jobs:
         run: |
           sudo apt-get update
           # Build essentials, CMake, GLFW dependencies (X11 / Xinerama etc.)
-          sudo apt-get install -y build-essential cmake git curl \
-            libglfw3-dev libgl1-mesa-dev libxrandr-dev libxinerama-dev \
-            libxcursor-dev libxi-dev libxext-dev python3 python3-pip
+          sudo apt-get install -y build-essential cmake git curl wget unzip python3 python3-pip \
+            libglfw3-dev libgl1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev
 
       - name: Prepare artifact directory
         run: |
           mkdir -p ${ARTIFACT_DIR}
+
+      - name: Build TensorFlow Lite from source (this may take long)
+        run: |
+          set -euo pipefail
+          echo "Cloning TensorFlow (shallow)"
+          git clone --depth 1 https://github.com/tensorflow/tensorflow.git third_party/tensorflow_src
+          pushd third_party/tensorflow_src
+
+          # Use CMake build for TensorFlow Lite (attempt best-effort). This builds the C API target
+          mkdir -p build_tflite
+          cd build_tflite
+
+          # Try a conservative CMake configuration for tflite. Some configs may not be supported in all TF versions.
+          cmake -DCMAKE_BUILD_TYPE=Release -DTFLITE_ENABLE_XNNPACK=OFF -DTFLITE_ENABLE_RUY=OFF -DBUILD_SHARED_LIBS=ON ../tensorflow/lite || true
+
+          # attempt to build the C API library and regular tflite libs (best-effort)
+          cmake --build . --target tensorflowlite_c --parallel || true
+          cmake --build . --target tensorflowlite --parallel || true
+
+          # Create expected third_party/tflite layout
+          popd
+          mkdir -p third_party/tflite/include third_party/tflite/lib
+
+          # Try to locate built libraries and headers and copy them (best-effort)
+          find third_party/tensorflow_src -type f -name "libtensorflowlite*.so" -exec cp {} third_party/tflite/lib/ \; || true
+          find third_party/tensorflow_src -type f -name "tensorflowlite*.a" -exec cp {} third_party/tflite/lib/ \; || true
+          # copy public headers from the tensorflow repo (may be under tensorflow/lite/)
+          cp -r third_party/tensorflow_src/tensorflow/lite/*.h third_party/tflite/include/ 2>/dev/null || true
+          cp -r third_party/tensorflow_src/tensorflow/lite/tools/*.h third_party/tflite/include/ 2>/dev/null || true
+
+          echo "TFLite build/collect step finished. third_party/tflite contains:"
+          ls -la third_party/tflite || true
 
       - name: (Optional) Download prebuilt TFLite package if requested
         if: ${{ github.event.inputs.use_prebuilt_tflite == 'true' || env.USE_PREBUILT_TFLITE == 'true' }}
@@ -69,7 +101,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p ${BUILD_DIR}
-          # If prebuilt TFLite extracted under third_party/tflite with include/ and lib/
+          # If prebuilt/built TFLite exists under third_party/tflite with include/ and lib/
           # then set CMake variables to point to them.
           TFLITE_INCLUDES=""
           TFLITE_LIB=""
