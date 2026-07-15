@@ -25,9 +25,9 @@ set(common_source_files
     ${CMAKE_CURRENT_SOURCE_DIR}/sink/sink_raw_data.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/sink/sink_raw_data_yuv.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/sink/sink_render.cc
-#if defined(GPUPIXEL_ANDROID)
+##if defined(GPUPIXEL_ANDROID)
     ${CMAKE_CURRENT_SOURCE_DIR}/sink/sink_surface.cc
-#endif
+# endif
     ${CMAKE_CURRENT_SOURCE_DIR}/sink/sink.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/utils/math_toolbox.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/utils/dispatch_queue.cc
@@ -61,16 +61,7 @@ set(common_source_files
     ${CMAKE_CURRENT_SOURCE_DIR}/filter/hue_filter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/filter/nearby_sampling3x3_filter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/filter/posterize_filter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/filter/color_invert_filter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/filter/single_component_gaussian_blur_mono_filter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/filter/gaussian_blur_mono_filter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/filter/convolution3x3_filter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/filter/weak_pixel_inclusion_filter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/filter/halftone_filter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/filter/saturation_filter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/filter/emboss_filter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/filter/grayscale_filter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/filter/lipstick_filter.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/filter/exposure_filter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/filter/box_mono_blur_filter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/filter/box_difference_filter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/filter/crosshatch_filter.cc
@@ -309,6 +300,30 @@ target_include_directories(
   ${gpupixel_libs_name} PUBLIC ${PROJECT_SOURCE_DIR}/include
                                ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Allow overriding TFLite include/lib via -DTFLITE_INCLUDE_DIR and -DTFLITE_LIB
+if(DEFINED TFLITE_INCLUDE_DIR)
+  target_include_directories(${gpupixel_libs_name} PUBLIC ${TFLITE_INCLUDE_DIR})
+endif()
+
+# If user provided a TFLite library path, link it and enable compile definition
+if(DEFINED TFLITE_LIB)
+  if(EXISTS "${TFLITE_LIB}")
+    target_link_libraries(${gpupixel_libs_name} PRIVATE "${TFLITE_LIB}")
+    target_compile_definitions(${gpupixel_libs_name} PRIVATE GPUPIXEL_ENABLE_TFLITE_DETECTOR=1)
+  else()
+    message(WARNING "TFLITE_LIB specified but not found: ${TFLITE_LIB}")
+  endif()
+else()
+  # fallback: if prebuilt tflite was placed in third_party/tflite, try to use it
+  if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/tflite/lib/libtensorflowlite.so")
+    target_link_libraries(${gpupixel_libs_name} PRIVATE "${PROJECT_SOURCE_DIR}/third_party/tflite/lib/libtensorflowlite.so")
+    target_compile_definitions(${gpupixel_libs_name} PRIVATE GPUPIXEL_ENABLE_TFLITE_DETECTOR=1)
+  elseif(EXISTS "${PROJECT_SOURCE_DIR}/third_party/tflite/lib/libtensorflowlite_c.so")
+    target_link_libraries(${gpupixel_libs_name} PRIVATE "${PROJECT_SOURCE_DIR}/third_party/tflite/lib/libtensorflowlite_c.so")
+    target_compile_definitions(${gpupixel_libs_name} PRIVATE GPUPIXEL_ENABLE_TFLITE_DETECTOR=1)
+  endif()
+endif()
+
 if(WIN32 AND GPUPIXEL_BUILD_SHARED_LIBS)
   # Windows DLL export macro definition
   target_compile_definitions(${gpupixel_libs_name}
@@ -441,7 +456,7 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Android")
             libyuv::yuv
             stb::stb
             ghc::filesystem
- 			"-Wl,-z,max-page-size=16384"
+			"-Wl,-z,max-page-size=16384"
             "-Wl,-z,common-page-size=16384")
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Emscripten")
   target_link_libraries(${gpupixel_libs_name} PRIVATE libyuv::yuv stb::stb
@@ -449,7 +464,15 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Emscripten")
 endif()
 
 if(GPUPIXEL_ENABLE_FACE_DETECTOR)
-  target_link_libraries(${gpupixel_libs_name} PRIVATE marsface::marsface)
+  # Prefer linking against a prebuilt mars-face-kit if available under third_party
+  set(MARS_FACE_LIB_PATH "${PROJECT_SOURCE_DIR}/third_party/mars-face-kit/libs/linux/libmars-face-kit.so")
+  if(EXISTS ${MARS_FACE_LIB_PATH})
+    message(STATUS "Found mars-face-kit at ${MARS_FACE_LIB_PATH}")
+    target_link_libraries(${gpupixel_libs_name} PRIVATE "${MARS_FACE_LIB_PATH}")
+    target_include_directories(${gpupixel_libs_name} PRIVATE ${PROJECT_SOURCE_DIR}/third_party/mars-face-kit/include)
+  else()
+    message(WARNING "mars-face-kit not found at ${MARS_FACE_LIB_PATH}; building without mars-face-kit. If you need mars features, add the prebuilt library to third_party/mars-face-kit/libs/linux/")
+  endif()
   if(APPLE)
     target_link_libraries(${gpupixel_libs_name} PRIVATE mnn)
   endif()
