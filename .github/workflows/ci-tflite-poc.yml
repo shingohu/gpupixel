@@ -1,28 +1,122 @@
-name: CI Build PoC
+name: CI Build PoC (TFLite face detector)
+
 on:
   workflow_dispatch:
+    inputs:
+      use_prebuilt_tflite:
+        description: 'true to download & use a prebuilt TFLite tarball (must provide tflite_url). Default false'
+        required: false
+        default: 'false'
+      tflite_url:
+        description: 'URL to a tar.gz containing include/ and lib/ for a prebuilt TFLite (optional)'
+        required: false
+        default: ''
   push:
     branches:
       - tflite-face-detector-prototype
 
 jobs:
   build-linux:
+    name: Build (Linux) - PoC
     runs-on: ubuntu-latest
+    env:
+      BUILD_DIR: build
+      ARTIFACT_DIR: build_logs
     steps:
-      - uses: actions/checkout@v4
-      - name: Install deps
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup basic packages
         run: |
-          sudo apt update
-          sudo apt install -y build-essential cmake git curl libglfw3-dev libgl1-mesa-dev
-      - name: Download models
-        run: bash ./third_party/models/download_models.sh
-      - name: Build with CMake (expect fail if TFLite not provided)
+          sudo apt-get update
+          # Build essentials, CMake, GLFW dependencies (X11 / Xinerama etc.)
+          sudo apt-get install -y build-essential cmake git curl \
+            libglfw3-dev libgl1-mesa-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libxext-dev python3 python3-pip
+
+      - name: Prepare artifact directory
+        run: |
+          mkdir -p ${ARTIFACT_DIR}
+
+      - name: (Optional) Download prebuilt TFLite package if requested
+        if: ${{ github.event.inputs.use_prebuilt_tflite == 'true' || env.USE_PREBUILT_TFLITE == 'true' }}
         run: |
           set -e
-          cmake -B build -S . -DGPUPIXEL_ENABLE_TFLITE_DETECTOR=ON || true
-          cmake --build build --parallel || true
-      - name: Upload build logs
+          URL="${{ github.event.inputs.tflite_url }}"
+          # allow override via env var TFLITE_PREBUILT_URL
+          if [ -z "$URL" ] && [ -n "${TFLITE_PREBUILT_URL:-}" ]; then
+            URL="${TFLITE_PREBUILT_URL}"
+          fi
+          if [ -z "$URL" ]; then
+            echo "ERROR: use_prebuilt_tflite=true but no tflite_url provided"
+            exit 2
+          fi
+          echo "Downloading prebuilt TFLite from: $URL"
+          mkdir -p third_party/tflite
+          cd third_party/tflite
+          curl -L -o prebuilt_tflite.tar.gz "$URL"
+          tar -xzf prebuilt_tflite.tar.gz
+          # Expect the tarball to unpack into include/ and lib/ (or adjust accordingly)
+          echo "Prebuilt TFLite extracted to third_party/tflite:"
+          ls -la
+
+      - name: Download models (use bash to avoid permission issues)
+        run: bash ./third_party/models/download_models.sh || true
+
+      - name: Configure CMake (capture output)
+        run: |
+          set -o pipefail
+          mkdir -p ${BUILD_DIR}
+          # If prebuilt TFLite extracted under third_party/tflite with include/ and lib/
+          # then set CMake variables to point to them.
+          TFLITE_INCLUDES=""
+          TFLITE_LIB=""
+          if [ -d third_party/tflite/include ]; then
+            TFLITE_INCLUDES="-DTFLITE_INCLUDE_DIR=${PWD}/third_party/tflite/include"
+          fi
+          if [ -f third_party/tflite/lib/libtensorflowlite.so ]; then
+            TFLITE_LIB="-DTFLITE_LIB=${PWD}/third_party/tflite/lib/libtensorflowlite.so"
+          elif [ -f third_party/tflite/lib/libtensorflowlite_c.so ]; then
+            TFLITE_LIB="-DTFLITE_LIB=${PWD}/third_party/tflite/lib/libtensorflowlite_c.so"
+          fi
+          echo "TFLITE_INCLUDES=${TFLITE_INCLUDES}"
+          echo "TFLITE_LIB=${TFLITE_LIB}"
+          cmake -B ${BUILD_DIR} -S . -DGPUPIXEL_ENABLE_TFLITE_DETECTOR=ON ${TFLITE_INCLUDES} ${TFLITE_LIB} > ${ARTIFACT_DIR}/cmake_configure_stdout.txt 2> ${ARTIFACT_DIR}/cmake_configure_stderr.txt || true
+          # record CMake cache for debugging
+          if [ -f ${BUILD_DIR}/CMakeCache.txt ]; then
+            cp ${BUILD_DIR}/CMakeCache.txt ${ARTIFACT_DIR}/CMakeCache.txt || true
+          fi
+          if [ -f ${BUILD_DIR}/CMakeFiles/CMakeError.log ]; then
+            cp ${BUILD_DIR}/CMakeFiles/CMakeError.log ${ARTIFACT_DIR}/CMakeError.log || true
+          fi
+          if [ -f ${BUILD_DIR}/CMakeFiles/CMakeOutput.log ]; then
+            cp ${BUILD_DIR}/CMakeFiles/CMakeOutput.log ${ARTIFACT_DIR}/CMakeOutput.log || true
+          fi
+          # show a short summary for the Actions console
+          echo "==== cmake configure stderr (tail) ===="
+          tail -n +1 ${ARTIFACT_DIR}/cmake_configure_stderr.txt | sed -n '1,200p' || true
+
+      - name: Build (capture output)
+        run: |
+          set -o pipefail
+          cmake --build ${BUILD_DIR} --parallel > ${ARTIFACT_DIR}/cmake_build_stdout.txt 2> ${ARTIFACT_DIR}/cmake_build_stderr.txt || true
+          echo "==== build stderr (tail) ===="
+          tail -n +1 ${ARTIFACT_DIR}/cmake_build_stderr.txt | sed -n '1,200p' || true
+
+      - name: Collect logs & list build artifacts
+        run: |
+          echo "Collecting logs to ${ARTIFACT_DIR}"
+          # Copy any notable files
+          if [ -d ${BUILD_DIR} ]; then
+            cp -r ${BUILD_DIR} ${ARTIFACT_DIR}/ || true
+          fi
+          ls -la ${ARTIFACT_DIR} || true
+          tar -czf ${ARTIFACT_DIR}.tar.gz ${ARTIFACT_DIR} || true
+
+      - name: Upload build logs artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: build || .
+          path: ${ARTIFACT_DIR}.tar.gz
