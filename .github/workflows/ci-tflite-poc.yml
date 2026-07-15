@@ -1,0 +1,28 @@
+name: CI Build PoC
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - tflite-face-detector-prototype
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential cmake git curl libglfw3-dev libgl1-mesa-dev
+      - name: Download models
+        run: ./third_party/models/download_models.sh
+      - name: Build with CMake (expect fail if TFLite not provided)
+        run: |
+          set -e
+          cmake -B build -S . -DGPUPIXEL_ENABLE_TFLITE_DETECTOR=ON || true
+          cmake --build build --parallel || true
+      - name: Upload build logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: build || .
