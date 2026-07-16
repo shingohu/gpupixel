@@ -79,7 +79,7 @@ jobs:
           URL="${{ github.event.inputs.tflite_url }}"
           # allow override via env var TFLITE_PREBUILT_URL
           if [ -z "$URL" ] && [ -n "${TFLITE_PREBUILT_URL:-}" ]; then
-            URL="${TFLITE_PREBUILT_URL}"
+            URL="$TFLITE_PREBUILT_URL"
           fi
           if [ -z "$URL" ]; then
             echo "ERROR: use_prebuilt_tflite=true but no tflite_url provided"
@@ -115,7 +115,8 @@ jobs:
           fi
           echo "TFLITE_INCLUDES=${TFLITE_INCLUDES}"
           echo "TFLITE_LIB=${TFLITE_LIB}"
-          cmake -B ${BUILD_DIR} -S . -DGPUPIXEL_ENABLE_TFLITE_DETECTOR=ON ${TFLITE_INCLUDES} ${TFLITE_LIB} > ${ARTIFACT_DIR}/cmake_configure_stdout.txt 2> ${ARTIFACT_DIR}/cmake_configure_stderr.txt || true
+          # Temporarily disable the face detector to allow TFLite build logs to surface
+          cmake -B ${BUILD_DIR} -S . -DGPUPIXEL_ENABLE_FACE_DETECTOR=OFF -DGPUPIXEL_ENABLE_TFLITE_DETECTOR=ON ${TFLITE_INCLUDES} ${TFLITE_LIB} > ${ARTIFACT_DIR}/cmake_configure_stdout.txt 2> ${ARTIFACT_DIR}/cmake_configure_stderr.txt || true
           # record CMake cache for debugging
           if [ -f ${BUILD_DIR}/CMakeCache.txt ]; then
             cp ${BUILD_DIR}/CMakeCache.txt ${ARTIFACT_DIR}/CMakeCache.txt || true
