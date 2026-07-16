@@ -464,15 +464,23 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Emscripten")
 endif()
 
 if(GPUPIXEL_ENABLE_FACE_DETECTOR)
-  # Prefer linking against a prebuilt mars-face-kit if available under third_party
-  set(MARS_FACE_LIB_PATH "${PROJECT_SOURCE_DIR}/third_party/mars-face-kit/libs/linux/libmars-face-kit.so")
-  if(EXISTS ${MARS_FACE_LIB_PATH})
-    message(STATUS "Found mars-face-kit at ${MARS_FACE_LIB_PATH}")
-    target_link_libraries(${gpupixel_libs_name} PRIVATE "${MARS_FACE_LIB_PATH}")
+  # Prefer adding mars-face-kit include dir if available under third_party
+  if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/mars-face-kit/include")
+    message(STATUS "Adding mars-face-kit include dir: ${PROJECT_SOURCE_DIR}/third_party/mars-face-kit/include")
     target_include_directories(${gpupixel_libs_name} PRIVATE ${PROJECT_SOURCE_DIR}/third_party/mars-face-kit/include)
   else()
-    message(WARNING "mars-face-kit not found at ${MARS_FACE_LIB_PATH}; building without mars-face-kit. If you need mars features, add the prebuilt library to third_party/mars-face-kit/libs/linux/")
+    message(WARNING "mars-face-kit include not found at ${PROJECT_SOURCE_DIR}/third_party/mars-face-kit/include; some headers may be missing.")
   endif()
+
+  # Prefer linking against a prebuilt mars-face-kit if available under third_party
+  set(MARS_FACE_LIB_PATH "${PROJECT_SOURCE_DIR}/third_party/mars-face-kit/libs/linux/libmars-face-kit.so")
+  if(EXISTS "${MARS_FACE_LIB_PATH}")
+    message(STATUS "Found mars-face-kit at ${MARS_FACE_LIB_PATH}")
+    target_link_libraries(${gpupixel_libs_name} PRIVATE "${MARS_FACE_LIB_PATH}")
+  else()
+    message(WARNING "mars-face-kit library not found at ${MARS_FACE_LIB_PATH}; building without mars-face-kit. If you need mars features, add the prebuilt library to third_party/mars-face-kit/libs/linux/")
+  endif()
+
   if(APPLE)
     target_link_libraries(${gpupixel_libs_name} PRIVATE mnn)
   endif()
